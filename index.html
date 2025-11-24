@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clear Your Way - Detection Hub</title>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap" rel="stylesheet">
+
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Montserrat', sans-serif;
+    background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+    color: white;
+    min-height: 100vh;
+  }
+
+  header {
+    text-align: center;
+    padding: 50px 20px 30px;
+    background: rgba(0,0,0,0.5);
+  }
+
+  header h1 {
+    font-size: 3rem;
+    margin-bottom: 10px;
+    color: #ffd700;
+    text-shadow: 2px 2px 8px black;
+  }
+
+  header p {
+    font-size: 1.3rem;
+    color: #eee;
+  }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+    padding: 40px 20px;
+    max-width: 1200px;
+    margin: auto;
+  }
+
+  .card {
+    background: rgba(255,255,255,0.05);
+    border-radius: 20px;
+    padding: 30px 20px;
+    text-align: center;
+    transition: transform 0.3s, background 0.3s;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.4);
+  }
+
+  .card:hover {
+    transform: translateY(-10px);
+    background: rgba(255,255,255,0.1);
+  }
+
+  .card h2 {
+    font-size: 1.7rem;
+    margin-bottom: 15px;
+    color: #ffd700;
+  }
+
+  .card p {
+    font-size: 1rem;
+    margin-bottom: 20px;
+    color: #ddd;
+  }
+
+  .card a {
+    display: inline-block;
+    padding: 12px 25px;
+    background: #ffd700;
+    color: #000;
+    font-weight: bold;
+    border-radius: 50px;
+    text-decoration: none;
+    transition: background 0.3s, color 0.3s;
+  }
+
+  .card a:hover {
+    background: #ffea00;
+    color: #111;
+  }
+
+  footer {
+    text-align: center;
+    padding: 30px 20px;
+    background: rgba(0,0,0,0.6);
+    font-size: 0.9rem;
+    color: #ccc;
+  }
+
+  @media(max-width: 500px){
+    header h1 { font-size: 2.2rem; }
+    header p { font-size: 1rem; }
+  }
+</style>
+</head>
+
+<body>
+
+<header>
+  <h1>Clear Your Way</h1>
+  <p>Explore our advanced obstacle detection tools for a safer journey</p>
+</header>
+
+<section class="cards">
+
+  <!-- Tool 1 -->
+  <div class="card">
+    <h2>Pathfinder</h2>
+    <p>Detects obstacles directly in your path with precision alerts.</p>
+    <a href="accurate-detector.html">Launch</a>
+  </div>
+
+  <!-- Tool 2 -->
+  <div class="card">
+    <h2>Wall Guardian</h2>
+    <p>Detect walls and large surfaces with instant vibration and beeps.</p>
+    <a href="wall-detector.html">Launch</a>
+  </div>
+
+  <!-- Tool 3 -->
+  <div class="card">
+    <h2>Close-Range Sentinel</h2>
+    <p>Optimized for close objects (≤1 meter) to guide you safely indoors.</p>
+    <a href="close-range-detector.html">Launch</a>
+  </div>
+
+  <!-- Tool 4 -->
+  <div class="card">
+    <h2>Multi-Zone Scout</h2>
+    <p>Divides the camera view into zones for full coverage of all obstacles.</p>
+    <a href="multi-zone-detector.html">Launch</a>
+  </div>
+
+  <!-- Tool 5 -->
+  <div class="card">
+    <h2>Vibe Navigator</h2>
+    <p>Provides vibration and beep alerts to indicate the direction of obstacles.</p>
+    <a href="vibe-detector.html">Launch</a>
+  </div>
+
+</section>
+
+<footer>
+  &copy; 2025 Clear Your Way | Designed for safe navigation
+</footer>
+
+</body>
+</html>

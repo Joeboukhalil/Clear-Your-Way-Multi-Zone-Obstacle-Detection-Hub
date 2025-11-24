@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wall & Obstacle Detector</title>
+
+<style>
+  body {
+    background: black;
+    color: white;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    font-family: Arial;
+  }
+  video {
+    width: 100%;
+    max-width: 420px;
+    border: 2px solid white;
+    margin-top: 10px;
+    border-radius: 12px;
+  }
+  canvas { display: none; }
+  #status {
+    margin-top: 15px;
+    font-size: 22px;
+    font-weight: bold;
+  }
+</style>
+
+</head>
+<body>
+
+<video id="video" autoplay playsinline></video>
+<canvas id="canvas"></canvas>
+<div id="status">Starting camera…</div>
+
+<script>
+let video = document.getElementById("video");
+let canvas = document.getElementById("canvas");
+let ctx = canvas.getContext("2d");
+let statusBox = document.getElementById("status");
+
+let lastFrame = null;
+let lastBeepTime = 0;
+
+// beep
+function beep(freq=700, duration=100) {
+    const audio = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audio.createOscillator();
+    osc.frequency.value = freq;
+    osc.connect(audio.destination);
+    osc.start();
+    osc.stop(audio.currentTime + duration / 1000);
+}
+
+// vibrate
+function vibrate(pattern) {
+    if (navigator.vibrate) navigator.vibrate(pattern);
+}
+
+async function startCamera() {
+    let stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" }
+    });
+    video.srcObject = stream;
+
+    video.onloadedmetadata = () => {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        statusBox.textContent = "Ready";
+        analyze();
+    };
+}
+
+function analyze() {
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    let frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let data = frame.data;
+
+    let dark = 0;
+    let edges = 0;
+    let motion = 0;
+
+    // Edge detection kernel (Sobel)
+    function sobel(x, y) {
+        let w = canvas.width;
+        let i = (y * w + x) * 4;
+
+        let gx =
+            data[i - 4] - data[i + 4] +
+            2 * (data[i - w * 4] - data[i + w * 4]) +
+            data[i - w * 4 - 4] - data[i + w * 4 + 4];
+
+        let gy =
+            data[i - w * 4] - data[i + w * 4] +
+            2 * (data[i - w * 4 - 4] - data[i + w * 4 + 4]) +
+            data[i - 4] - data[i + 4];
+
+        return Math.abs(gx) + Math.abs(gy);
+    }
+
+    // Loop image
+    for (let y = 1; y < canvas.height - 1; y++) {
+        for (let x = 1; x < canvas.width - 1; x++) {
+            let i = (y * canvas.width + x) * 4;
+
+            let brightness = data[i] + data[i+1] + data[i+2];
+            if (brightness < 100) dark++;
+
+            if (sobel(x, y) > 1500) edges++;
+
+            if (lastFrame) {
+                let diff =
+                    Math.abs(data[i] - lastFrame[i]) +
+                    Math.abs(data[i+1] - lastFrame[i+1]) +
+                    Math.abs(data[i+2] - lastFrame[i+2]);
+                if (diff > 60) motion++;
+            }
+        }
+    }
+
+    lastFrame = data;
+
+    let total = canvas.width * canvas.height;
+    let darkRatio = dark / total;
+    let edgeRatio = edges / total;
+    let motionRatio = motion / total;
+
+    let now = Date.now();
+
+    let warning = "Clear";
+
+    // WALL DETECTION
+    if (darkRatio > 0.50 && edgeRatio < 0.008) {
+        warning = "WALL AHEAD!";
+        vibrate([250, 50, 250]);
+        if (now - lastBeepTime > 250) { beep(500); lastBeepTime = now; }
+    }
+    // LARGE OBJECT
+    else if (darkRatio > 0.30 || edgeRatio < 0.015) {
+        warning = "Obstacle Close";
+        vibrate([150]);
+        if (now - lastBeepTime > 600) { beep(700); lastBeepTime = now; }
+    }
+    // SMALL OBJECT (pole, person)
+    else if (motionRatio > 0.01) {
+        warning = "Something Ahead";
+        vibrate([80]);
+        if (now - lastBeepTime > 900) { beep(900); lastBeepTime = now; }
+    }
+
+    statusBox.textContent = warning;
+    requestAnimationFrame(analyze);
+}
+
+startCamera();
+</script>
+
+</body>
+</html>

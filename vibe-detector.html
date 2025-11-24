@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enhanced Blind Detector</title>
+<style>
+body {
+  background: black;
+  color: white;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-family: Arial;
+}
+video {
+  width: 100%;
+  max-width: 420px;
+  border: 2px solid white;
+  margin-top: 10px;
+  border-radius: 12px;
+}
+canvas { display: none; }
+#status {
+  margin-top: 15px;
+  font-size: 22px;
+  font-weight: bold;
+  text-align: center;
+}
+</style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline></video>
+<canvas id="canvas"></canvas>
+<div id="status">Starting camera…</div>
+
+<script>
+let video = document.getElementById("video");
+let canvas = document.getElementById("canvas");
+let ctx = canvas.getContext("2d");
+let statusBox = document.getElementById("status");
+
+let lastFrame = null;
+let lastBeepTime = 0;
+
+// beep function
+function beep(freq=700, duration=100){
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    osc.frequency.value = freq;
+    osc.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration / 1000);
+}
+
+// vibrate
+function vibrate(pattern){
+    if(navigator.vibrate) navigator.vibrate(pattern);
+}
+
+// start camera
+async function startCamera(){
+    try{
+        let stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+        video.srcObject = stream;
+        video.onloadedmetadata = ()=>{
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            statusBox.textContent = "Ready";
+            analyze();
+        };
+    }catch(e){
+        statusBox.textContent = "Camera permission blocked.";
+    }
+}
+
+// simple edge detection
+function edgeBrightness(x,y,width,height,data){
+    let edges=0;
+    for(let j=y;j<y+height;j++){
+        for(let i=x;i<x+width;i++){
+            let idx=(Math.floor(j)*canvas.width+Math.floor(i))*4;
+            let b = data[idx]+data[idx+1]+data[idx+2];
+            let bx = (i>0)?data[idx-4]+data[idx-3]+data[idx-2]:b;
+            let by = (j>0)?data[idx - canvas.width*4]+data[idx - canvas.width*4+1]+data[idx - canvas.width*4+2]:b;
+            if(Math.abs(b-bx)>30 || Math.abs(b-by)>30) edges++;
+        }
+    }
+    return edges;
+}
+
+// analyze function
+function analyze(){
+    ctx.drawImage(video,0,0,canvas.width,canvas.height);
+    let frame=ctx.getImageData(0,0,canvas.width,canvas.height).data;
+
+    let zones=[
+        {name:"CENTER", x:canvas.width*0.45, y:canvas.height*0.45, w:canvas.width*0.1, h:canvas.height*0.1},
+        {name:"LEFT", x:canvas.width*0.1, y:canvas.height*0.45, w:canvas.width*0.1, h:canvas.height*0.1},
+        {name:"RIGHT", x:canvas.width*0.8, y:canvas.height*0.45, w:canvas.width*0.1, h:canvas.height*0.1},
+        {name:"TOP", x:canvas.width*0.45, y:canvas.height*0.1, w:canvas.width*0.1, h:canvas.height*0.1},
+        {name:"BOTTOM", x:canvas.width*0.45, y:canvas.height*0.8, w:canvas.width*0.1, h:canvas.height*0.1}
+    ];
+
+    let warnings=[];
+
+    zones.forEach(zone=>{
+        let dark=0;
+        let total=zone.w*zone.h;
+        let edges=edgeBrightness(zone.x,zone.y,zone.w,zone.h,frame);
+
+        for(let j=zone.y;j<zone.y+zone.h;j++){
+            for(let i=zone.x;i<zone.x+zone.w;i++){
+                let idx=(Math.floor(j)*canvas.width+Math.floor(i))*4;
+                let brightness = frame[idx]+frame[idx+1]+frame[idx+2];
+                if(brightness<100) dark++;
+            }
+        }
+        let darkRatio=dark/total;
+
+        // determine warning level
+        let level="";
+        if(darkRatio>0.5 || edges<Math.floor(total*0.02)){
+            level="VERY CLOSE";
+            vibrate([200,50,200]);
+            if(Date.now()-lastBeepTime>250){beep(500);lastBeepTime=Date.now();}
+        } else if(darkRatio>0.3 || edges<Math.floor(total*0.05)){
+            level="CLOSE";
+            vibrate([100]);
+            if(Date.now()-lastBeepTime>500){beep(700);lastBeepTime=Date.now();}
+        } else{
+            level="CLEAR";
+        }
+
+        if(level!="CLEAR") warnings.push(zone.name+": "+level);
+    });
+
+    statusBox.textContent=(warnings.length>0)?warnings.join(" | "):"CLEAR";
+
+    requestAnimationFrame(analyze);
+}
+
+startCamera();
+</script>
+</body>
+</html>

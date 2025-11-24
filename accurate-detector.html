@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Obstacle Detector (for blind)</title>
+<style>
+  :root{--bg:#0b1220;--card:#0f1724;--accent:#1e90ff;--text:#e6eef8}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;
+       margin:0;background:linear-gradient(180deg,var(--bg),#071021);
+       color:var(--text);display:flex;flex-direction:column;align-items:center;padding:18px;min-height:100vh}
+  .card{width:100%;max-width:760px;background:var(--card);border-radius:14px;padding:16px;box-shadow:0 8px 30px rgba(2,6,23,.6)}
+  h1{font-size:20px;margin:0 0 8px}
+  p{margin:6px 0 12px;color:#bcd3f1}
+  .video-wrap{position:relative;border-radius:10px;overflow:hidden;background:#000}
+  video{width:100%;height:auto;display:block;transform:rotateY(180deg)} /* mirror for easier hold */
+  .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#02203b;border:0;padding:10px 14px;border-radius:8px;font-weight:700}
+  button.secondary{background:transparent;border:1px solid #20344d;color:var(--text);font-weight:600}
+  label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:180px}
+  .status{margin-top:10px;padding:10px;border-radius:8px;background:linear-gradient(90deg, rgba(255,255,255,0.02), transparent)}
+  .big{font-size:18px;font-weight:800}
+  .danger{color:#ffdcdc}
+  .small{font-size:13px;color:#a8c2e6}
+</style>
+</head>
+<body>
+  <div class="card" role="application" aria-label="Obstacle detector for visually impaired">
+    <h1>Obstacle Detector</h1>
+    <p class="small">Hold your phone with the camera pointing forward (rear camera). The app detects objects/obstacles (by visual change) and speaks a warning.</p>
+
+    <div class="video-wrap" aria-hidden="false">
+      <video id="video" autoplay playsinline></video>
+    </div>
+
+    <div class="controls">
+      <button id="startBtn">Start</button>
+      <button id="stopBtn" class="secondary" disabled>Stop</button>
+      <label class="small" title="Sensitivity: lower = more sensitive">
+        Sensitivity
+        <input id="sensitivity" type="range" min="1" max="100" value="20" />
+      </label>
+      <label class="small">
+        Aggressiveness
+        <input id="agg" type="range" min="1" max="10" value="4" />
+      </label>
+      <button id="calibrate" class="secondary">Calibrate (sample)</button>
+    </div>
+
+    <div class="status" aria-live="polite">
+      <div class="big" id="detText">Idle</div>
+      <div class="small" id="infoText">Camera: not started</div>
+    </div>
+  </div>
+
+<script>
+(async function(){
+  // Elements
+  const video = document.getElementById('video');
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const sensitivitySlider = document.getElementById('sensitivity');
+  const aggSlider = document.getElementById('agg');
+  const detText = document.getElementById('detText');
+  const infoText = document.getElementById('infoText');
+  const calibrateBtn = document.getElementById('calibrate');
+
+  // Hidden canvases for processing
+  const w=320, h=240; // processing resolution (lower = faster)
+  const canvasA = document.createElement('canvas');
+  const canvasB = document.createElement('canvas');
+  canvasA.width = canvasB.width = w;
+  canvasA.height = canvasB.height = h;
+  const ctxA = canvasA.getContext('2d');
+  const ctxB = canvasB.getContext('2d');
+
+  let stream=null;
+  let running = false;
+  let prevPixels = null;
+  let detectionState = false;
+  let lastSpoken = 0;
+  const speakCooldown = 1200; // ms minimum between voice outputs
+  const stateCoolDown = 700; // ms to debounce state flips
+
+  // utility: speak text if allowed and not too frequent
+  function say(text, immediate=false){
+    const now = Date.now();
+    if(!('speechSynthesis' in window)) return;
+    if(!immediate && now - lastSpoken < speakCooldown) return;
+    lastSpoken = now;
+    const u = new SpeechSynthesisUtterance(text);
+    // prefer a clear voice if available:
+    const voices = speechSynthesis.getVoices();
+    if(voices && voices.length){
+      // pick a default voice that seems English and not too robotic (best-effort)
+      u.voice = voices.find(v=>/en|english/i.test(v.lang)) || voices[0];
+      u.rate = 0.95;
+      u.pitch = 1.0;
+    }
+    speechSynthesis.cancel(); // cancel any previous short utterance to avoid overlap
+    speechSynthesis.speak(u);
+  }
+
+  // compute luminance difference percent between two ImageData objects
+  function computeDiffPercent(dataA, dataB){
+    // dataA and dataB are Uint8ClampedArray RGBA
+    let diffSum = 0;
+    // use luminance per pixel to be robust to color
+    for(let i=0, l=dataA.length;i<l;i+=4){
+      const rA=dataA[i], gA=dataA[i+1], bA=dataA[i+2];
+      const rB=dataB[i], gB=dataB[i+1], bB=dataB[i+2];
+      const lumA = 0.2126*rA + 0.7152*gA + 0.0722*bA;
+      const lumB = 0.2126*rB + 0.7152*gB + 0.0722*bB;
+      diffSum += Math.abs(lumA - lumB);
+    }
+    // maximum per pixel difference is 255, so percent = diffSum / (255 * pixelCount)
+    const pixelCount = dataA.length/4;
+    const percent = diffSum / (255 * pixelCount);
+    return percent; // between 0 and 1
+  }
+
+  // main loop: draw current video frame to canvas, compare with previous
+  let lastStateChange = 0;
+  function processFrame(){
+    if(!running) return;
+    try{
+      ctxA.drawImage(video, 0, 0, w, h);
+      const img = ctxA.getImageData(0,0,w,h);
+      if(prevPixels){
+        // compute diff
+        const diffPercent = computeDiffPercent(img.data, prevPixels);
+        // sensitivity slider: convert slider value to threshold
+        // slider 1..100: lower slider = more sensitive --> threshold smaller
+        const raw = Number(sensitivitySlider.value); // 1..100
+        const threshold = (raw / 1000); // e.g., slider=20 -> 0.02
+        // aggressiveness reduces noise by requiring consecutive frames above threshold
+        const agg = Number(aggSlider.value); // 1..10
+        // use a simple smoothing: maintain a moving average over last few diffs
+        if(!window._diffHistory) window._diffHistory = [];
+        window._diffHistory.push(diffPercent);
+        if(window._diffHistory.length > agg) window._diffHistory.shift();
+        const avg = window._diffHistory.reduce((s,x)=>s+x,0)/window._diffHistory.length;
+
+        // decide detection
+        const detected = avg >= threshold;
+        // debounce state flips (avoid chattering)
+        const now = Date.now();
+        if(detected !== detectionState && now - lastStateChange > stateCoolDown){
+          detectionState = detected;
+          lastStateChange = now;
+          // do actions on state change
+          if(detectionState){
+            detText.textContent = "Obstacle detected — Move away";
+            detText.classList.add('danger');
+            infoText.textContent = `Change detected: ${(avg*100).toFixed(2)}%  threshold ${(threshold*100).toFixed(2)}%`;
+            // speak
+            say("Obstacle detected. Move away.");
+            // vibrate short pattern if supported
+            if(navigator.vibrate) navigator.vibrate([80,40,80]);
+          } else {
+            detText.textContent = "Clear";
+            detText.classList.remove('danger');
+            infoText.textContent = `Clear — ${(avg*100).toFixed(2)}%`;
+            say("Clear", false);
+          }
+        } else {
+          // update info only
+          infoText.textContent = `Change ${(avg*100).toFixed(2)}%  threshold ${(threshold*100).toFixed(2)}%`;
+        }
+      } else {
+        infoText.textContent = "Calibrating...";
+      }
+      // save current pixels as previous
+      prevPixels = new Uint8ClampedArray(img.data); // copy
+    }catch(err){
+      console.error("Frame processing error:", err);
+    } finally{
+      // schedule next frame at a moderate rate
+      setTimeout(()=>{ if(running) requestAnimationFrame(processFrame); }, 60); // ~16 fps effective
+    }
+  }
+
+  // start camera
+  async function startCamera(){
+    if(stream) return;
+    try{
+      // ask for environment (rear) camera if available
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+      video.srcObject = stream;
+      await video.play();
+      detText.textContent = "Camera started — Calibrate for best results";
+      infoText.textContent = "Point camera forward. Use Calibrate to sample background.";
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+    } catch(err){
+      console.error("Camera error:", err);
+      detText.textContent = "Camera error — permission denied or no camera";
+      infoText.textContent = String(err);
+      say("Cannot access camera. Please allow camera permission.", true);
+    }
+  }
+
+  // stop camera and processing
+  function stopCamera(){
+    if(stream){
+      stream.getTracks().forEach(t=>t.stop());
+      stream = null;
+    }
+    running = false;
+    prevPixels = null;
+    window._diffHistory = [];
+    detText.textContent = "Stopped";
+    infoText.textContent = "Camera stopped";
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+  }
+
+  // calibration: sample a few frames to set prevPixels baseline
+  function calibrate(){
+    if(!stream){
+      say("Start the camera first");
+      return;
+    }
+    // take a few frames as baseline
+    prevPixels = null;
+    window._diffHistory = [];
+    detText.textContent = "Calibrating... Hold steady";
+    infoText.textContent = "Sampling background frames (1.5s)...";
+    // take frames for 1.5s
+    const samples = 18;
+    let collected = 0;
+    const sampleInterval = setInterval(()=>{
+      try{
+        ctxB.drawImage(video, 0, 0, w, h);
+        const im = ctxB.getImageData(0,0,w,h);
+        if(!prevPixels) prevPixels = new Uint8ClampedArray(im.data);
+        else {
+          // average into prevPixels
+          for(let i=0;i<im.data.length;i++){
+            prevPixels[i] = Math.round((prevPixels[i]*(collected) + im.data[i])/(collected+1));
+          }
+        }
+      }catch(e){ console.warn(e); }
+      collected++;
+      if(collected>=samples){
+        clearInterval(sampleInterval);
+        detText.textContent = "Calibrated";
+        infoText.textContent = "Calibration done. Ready.";
+        say("Calibration complete");
+      }
+    }, 80);
+  }
+
+  // start/stop processing
+  startBtn.addEventListener('click', async ()=>{
+    await startCamera();
+    running = true;
+    prevPixels = null;
+    window._diffHistory = [];
+    requestAnimationFrame(processFrame);
+    say("Camera started. Calibrate and adjust sensitivity.");
+  });
+  stopBtn.addEventListener('click', ()=>{ stopCamera(); });
+
+  calibrateBtn.addEventListener('click', calibrate);
+
+  // graceful stop when page unloaded
+  window.addEventListener('pagehide', ()=>{ stopCamera(); });
+
+  // Optional: speak current slider values for blind users when changed
+  sensitivitySlider.addEventListener('change', ()=>{ say(`Sensitivity ${sensitivitySlider.value}`); });
+  aggSlider.addEventListener('change', ()=>{ say(`Aggressiveness ${aggSlider.value}`); });
+
+  // autoplay speech voices may be unavailable until user interacts. Prompt gently.
+  window.addEventListener('click', ()=>{ // unlock speechSynthesis voices on user interaction
+    if(speechSynthesis && speechSynthesis.getVoices().length===0){
+      // force load voices
+      speechSynthesis.getVoices();
+    }
+  }, {once:true});
+
+  // initially suggest starting
+  detText.textContent = "Idle";
+  infoText.textContent = "Press Start to open camera.";
+})();
+</script>
+</body>
+</html>

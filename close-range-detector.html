@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blind Navigation Assist</title>
+
+<style>
+  body {
+    background: black;
+    color: white;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    font-family: Arial;
+  }
+
+  video {
+    width: 100%;
+    max-width: 420px;
+    border: 2px solid white;
+    margin-top: 10px;
+    border-radius: 12px;
+  }
+
+  canvas {
+    display: none;
+  }
+
+  #status {
+    margin-top: 15px;
+    font-size: 22px;
+    font-weight: bold;
+  }
+</style>
+
+</head>
+<body>
+
+<video id="video" autoplay playsinline></video>
+<canvas id="canvas"></canvas>
+<div id="status">Starting camera…</div>
+
+<script>
+let video = document.getElementById("video");
+let canvas = document.getElementById("canvas");
+let ctx = canvas.getContext("2d");
+let statusBox = document.getElementById("status");
+
+let lastFrame = null;
+let lastBeepTime = 0;
+
+// Small beep sound
+function playBeep() {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    osc.type = "square";
+    osc.frequency.value = 700;  
+    osc.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.1); // 100ms beep
+}
+
+function vibrate(pattern) {
+    if (navigator.vibrate) {
+        navigator.vibrate(pattern);
+    }
+}
+
+async function startCamera() {
+    try {
+        let stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment" }
+        });
+        video.srcObject = stream;
+
+        video.onloadedmetadata = () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            statusBox.textContent = "Ready";
+            analyze();
+        };
+    } catch (e) {
+        statusBox.textContent = "Camera permission blocked.";
+    }
+}
+
+function analyze() {
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    let frame = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let darkPixels = 0;
+
+    if (lastFrame) {
+        for (let i = 0; i < frame.length; i += 4) {
+            let brightness = frame[i] + frame[i+1] + frame[i+2];
+            if (brightness < 80) darkPixels++;
+        }
+    }
+
+    lastFrame = frame;
+
+    let darkRatio = darkPixels / (frame.length / 4);
+    let now = Date.now();
+
+    if (darkRatio > 0.55) {
+        statusBox.textContent = "DANGER: Very Close!";
+        vibrate([200, 50, 200]); // strong vibration
+        if (now - lastBeepTime > 250) { playBeep(); lastBeepTime = now; }
+    }
+    else if (darkRatio > 0.40) {
+        statusBox.textContent = "Very Close";
+        vibrate([150]); // medium vibration
+        if (now - lastBeepTime > 600) { playBeep(); lastBeepTime = now; }
+    }
+    else if (darkRatio > 0.25) {
+        statusBox.textContent = "Close";
+        vibrate([80]); // short vibration
+        if (now - lastBeepTime > 900) { playBeep(); lastBeepTime = now; }
+    }
+    else {
+        statusBox.textContent = "Clear";
+    }
+
+    requestAnimationFrame(analyze);
+}
+
+startCamera();
+</script>
+
+</body>
+</html>
